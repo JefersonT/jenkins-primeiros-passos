@@ -99,6 +99,7 @@ Esse job vai fazer o build do projeto e registrar a imagem no repositório.
     ```
     $ cd /vagrant/jenkins-todo-list/to_do/
     $ vi .env
+    ```
         [config]
         - Secret configuration
         SECRET_KEY = 'r*5ltfzw-61ksdm41fuul8+hxs$86yo9%k1%k=(!@=-wv4qtyv'
@@ -112,7 +113,6 @@ Esse job vai fazer o build do projeto e registrar a imagem no repositório.
         DB_PASSWORD = "mestre"
         DB_HOST = "localhost"
         DB_PORT = "3306"
-    ```
 - Instalando o venv
     ```
     $ sudo pip3 install virtualenv nose coverage nosexcover pylint
@@ -136,6 +136,7 @@ Esse job vai fazer o build do projeto e registrar a imagem no repositório.
 - Repetir o processo de migracaoção para o ambiente de produção:
     ```
     $ vi to_do/.env
+    ```
         [config]
         - Secret configuration
         SECRET_KEY = 'r*5ltfzw-61ksdm41fuul8+hxs$86yo9%k1%k=(!@=-wv4qtyv'
@@ -149,7 +150,7 @@ Esse job vai fazer o build do projeto e registrar a imagem no repositório.
         DB_PASSWORD = "mestre"
         DB_HOST = "localhost"
         DB_PORT = "3306"
-    ```
+
 - Fazendo a migracao inicial dos dados
     ```
     $ python manage.py makemigrations
@@ -178,7 +179,7 @@ $ sudo vi /etc/systemd/system/docker.service.d/override.conf
 $ sudo systemctl daemon-reload
 $ sudo systemctl restart docker.service
 ```
-### Instalando os plugins
+### Instalando os plugins Docker
 - Gerenciar Jenkins -> Gerenciar Plugins -> Disponíveis
     - docker
 - Install without restart -> Depois reiniciar o jenkins
@@ -198,5 +199,92 @@ $ sudo systemctl restart docker.service
         - Directory for Dockerfile: ./
         - Cloud: docker
         - Image: rafaelvzago/django_todolist_image_build
+
+### Instalar o plugin Config File Provider
+- Gerenciar Jenkins -> Gerenciar Plugins -> Disponíveis
+    - Config File Provider
+- Install without restart
+
+### Configurar o Managed Files para Dev
+- Gerenciar Jenkins -> Gerenciar arquivos
+    - Adicionar uma nova Config
+        - Name : .env-dev
+            ```
+            [config]
+            # Secret configuration
+            SECRET_KEY = 'r*5ltfzw-61ksdm41fuul8+hxs$86yo9%k1%k=(!@=-wv4qtyv'
+            # conf
+            DEBUG=True
+            # Database
+            DB_NAME = "todo_dev"
+            DB_USER = "devops_dev"
+            DB_PASSWORD = "mestre"
+            DB_HOST = "localhost"
+            DB_PORT = "3306"
+            ```
+### Configurar o Managed Files para Prod
+- Gerenciar Jenkins -> Gerenciar arquivos
+    - Adicionar uma nova Config
+        - Name : .env-prod
+            ```
+            [config]
+            # Secret configuration
+            SECRET_KEY = 'r*5ltfzw-61ksdm41fuul8+hxs$86yo9%k1%k=(!@=-wv4qtyv'
+            # conf
+            DEBUG=True
+            # Database
+            DB_NAME = "todo"
+            DB_USER = "devops"
+            DB_PASSWORD = "mestre"
+            DB_HOST = "localhost"
+            DB_PORT = "3306"
+            ```
+- No job: jenkins-todo-list-principal importar o env de dev para teste:
+
+    - Adicionar passo no build: Provide configuration Files
+    - File: .env-dev
+    - Target: ./to_do/.env
+    - Adicionar passo no build: Executar Shell
+        - Criando o Script para Subir o container com o arquivo de env e testar a app:
+            ```
+            #!/bin/sh
+
+            # Subindo o container de teste
+            docker run -d -p 82:8000 -v /var/run/mysqld/mysqld.sock:/var/run/mysqld/mysqld.sock -v /var/lib/jenkins/workspace/jenkins-todo-list-principal/to_do/.env:/usr/src/app/to_do/.env --name=todo-list-teste django_todolist_image_build
+
+            # Testando a imagem
+            docker exec -i todo-list-teste python manage.py test --keep
+            exit_code=$?
+
+            # Derrubando o container velho
+            docker rm -f todo-list-teste
+
+            if [ $exit_code -ne 0 ]; then
+                exit 1
+            fi
+            ```
+    - Execute o projeto para testar.
+### Instalar o plugin: Parameterized Trigger 
+- Gerenciar Jenkins -> Gerenciar Plugins -> Disponíveis
+    - Parameterized Trigger
+- Install without restart
+
+### Modificar o Job para startar com 2 parametros:
+- Geral:
+    - Este build é parametrizado com 2 parametros de string
+        - Nome: image
+            - Valor padrão: <seu-usuario-no-dockerhub>/django_todolist_image_build
+
+        - Nome: DOCKER_HOST
+            - Valor padrão: tcp://127.0.0.1:2376
+
+- No build step: Build / Publish Docker Image
+    - Mudar o nome da imagem para: <seu-usuario-no-dockerhub>/django_todolist_image_build
+    - Marcar: Push Image e configurar **suas credenciais** no dockerhub
+
+- Mudar no job de teste a imagem para: ${image}
+    ```
+    docker run -d -p 82:8000 -v /var/run/mysqld/mysqld.sock:/var/run/mysqld/mysqld.sock -v /var/lib/jenkins/workspace/jenkins-todo-list-principal/to_do/.env:/usr/src/app/to_do/.env --name=todo-list-teste ${image}
+    ```
 ## Anotações
 -  Jenkins é um servidor de *Integração Contínua* open-source escrito em Java. Ele é o mais popular mas não a única opção. Outros servidores de *Integração Contínua* são TeamCity, Bamboo, Travis CI ou Gitlab CI entre vários outros.
