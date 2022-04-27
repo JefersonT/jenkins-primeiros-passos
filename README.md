@@ -166,8 +166,8 @@ Esse job vai fazer o build do projeto e registrar a imagem no repositório.
 - Rodando a app
     ```
     $ python manage.py runserver 0:8000
-    $ http://192.168.33.10:8000
     ```
+- Acesse http://192.168.33.10:8000.
 ### Expor o deamon do docker
 ```
 $ sudo mkdir -p /etc/systemd/system/docker.service.d/
