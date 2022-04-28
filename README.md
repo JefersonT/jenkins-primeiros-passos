@@ -1,5 +1,8 @@
 # Jenkins e Docker
 Este repositório foi criado com o objetivo de praticar as atividades do curso da Alura **[Jenkins e Docker: Pipeline de entrega continua](https://cursos.alura.com.br/course/pipeline-ci-jenkins-docker)**, portanto os passo-a-passos são criados de acordo com o material do curso assim como alguns arquivos bases para o desenvolvimento do projeto.
+
+O Jenkins é um servidor de *Integração Contínua* open-source escrito em Java. Ele é o mais popular mas não a única opção. Outros servidores de *Integração Contínua* são TeamCity, Bamboo, Travis CI ou Gitlab CI entre vários outros.
+
 ## Configurando o ambiente e conectando máquina virtual:
 ### Máquina virtual com o vagrant
 - Requisitos: http://vagrantup.com e https://www.virtualbox.org/
@@ -286,5 +289,128 @@ $ sudo systemctl restart docker.service
     ```
     docker run -d -p 82:8000 -v /var/run/mysqld/mysqld.sock:/var/run/mysqld/mysqld.sock -v /var/lib/jenkins/workspace/jenkins-todo-list-principal/to_do/.env:/usr/src/app/to_do/.env --name=todo-list-teste ${image}
     ```
-## Anotações
--  Jenkins é um servidor de *Integração Contínua* open-source escrito em Java. Ele é o mais popular mas não a única opção. Outros servidores de *Integração Contínua* são TeamCity, Bamboo, Travis CI ou Gitlab CI entre vários outros.
+### Criar app no slack:
+- Defina o nome do canal de notificação de: pipeline-todolist
+- Guardar as seguintes informações:
+    - Workspace: <Subdomínio da equipe>
+    - Token de integração: <ID da credencial do token de integração do Jenkins app no seu canal do Slack>
+
+### Instalar o plugin do slack: 
+- Gerenciar Jenkins > Gerenciar Plugins > Disponíveis: Slack Notification
+    - Configurar no jenkins: Gerenciar Jenkins > Configuraçao o sistema > Global Slack Notifier Settings
+        - Workspace: <Subdomínio da equipe>
+        - Integration Token Credential ID : ADD > Jenkins > Secret Text
+            - Secret: <ID da credencial do token de integração do Jenkins app no seu canal do Slack>
+            - ID: slack-token
+        - Channel or Slack ID: pipeline-todolist
+
+### Novo Job: 
+- **Nome**: todo-list-desenvolvimento:
+    - **Tipo**: Pipeline
+    - Este build é parametrizado com 2 Builds de Strings:
+        - Nome: image
+            - Valor padrão: - Vazio, pois o valor sera recebido do job anterior.
+
+        - Nome: DOCKER_HOST
+            - Valor padrão: tcp://127.0.0.1:2376
+- Script groover:
+    ```
+    pipeline {
+        environment {
+            dockerImage = "${image}"
+        }
+        agent any
+
+        stages {
+            stage('Carregando o ENV de desenvolvimento') {
+                steps {
+                    configFileProvider([configFile(fileId: '<id do seu arquivo de desenvolvimento>', variable: 'env')]) {
+                        sh 'cat $env > .env'
+                    }
+                }
+            }
+            stage('Derrubando o container antigo') {
+                steps {
+                    script {
+                        try {
+                            sh 'docker rm -f django-todolist-dev'
+                        } catch (Exception e) {
+                            sh "echo $e"
+                        }
+                    }
+                }
+            }        
+            stage('Subindo o container novo') {
+                steps {
+                    script {
+                        try {
+                            sh 'docker run -d -p 81:8000 -v /var/run/mysqld/mysqld.sock:/var/run/mysqld/mysqld.sock -v /var/lib/jenkins/workspace/jenkins-todo-list-desenvolvimento/.env:/usr/src/app/to_do/.env --name=django-todolist-dev ' + dockerImage + ':latest'
+                        } catch (Exception e) {
+                            slackSend (color: 'error', message: "[ FALHA ] Não foi possivel subir o container - ${BUILD_URL} em ${currentBuild.duration}s", tokenCredentialId: 'slack-token')
+                            sh "echo $e"
+                            currentBuild.result = 'ABORTED'
+                            error('Erro')
+                        }
+                    }
+                }
+            }
+            stage('Notificando o usuario') {
+                steps {
+                    slackSend (color: 'good', message: '[ Sucesso ] O novo build esta disponivel em: http://192.168.33.10:81/ ', tokenCredentialId: 'slack-token')
+                }
+            }
+        }
+    }
+    ```
+
+### todo-list-principal > Configurar
+- Definir post build: image=$image
+- Salvar
+- Executar o projeto.
+
+### Subindo o container com o Sonarcube
+- Na máquina devops (Vagrant):
+    ```
+    $ docker run -d --name sonarqube -p 9000:9000 sonarqube:lts
+    ```
+- Acessar: http://192.168.33.10:9000
+    - Usuário: admin
+    - Senha: admin
+    - Redefina a senha como preferir
+    - Add Project
+        - Manually
+        - Name: jenkins-todolist
+        - Provide a token: enkins-todolist e anotar o seu token
+        - Run analysis on your project > Other (JS, Python, PHP, ...) > Linux > django-todo-list
+        - Copie o shell script fornecido
+            ```
+            sonar-scanner \
+                -Dsonar.projectKey=enkins-todolist \
+                -Dsonar.sources=. \
+                -Dsonar.host.url=http://192.168.33.10:9000 \
+                -Dsonar.login=<seu token>
+            ```
+# Criar um job para Coverage com o nome: todo-list-sonarqube
+- Gerenciamento de código fonte > Git
+    - git: git@github.com:alura-cursos/jenkins-todo-list.git (Selecione as mesmas credenciais)
+    - branch: master
+    - Pool SCM: * * * * *
+    - Delete workspace before build starts
+    - Execute Script:
+        - Build > Adicionar passo no build > Executar Shell
+        ```
+        #!/bin/bash
+        # Baixando o Sonarqube
+        wget https://s3.amazonaws.com/caelum-online-public/1110-jenkins/05/sonar-scanner-cli-3.3.0.1492-linux.zip
+
+        # Descompactando o scanner
+        unzip sonar-scanner-cli-3.3.0.1492-linux.zip
+
+        # Rodando o Scanner
+        ./sonar-scanner-3.3.0.1492-linux/bin/sonar-scanner   -X \
+            -Dsonar.projectKey=jenkins-todolist \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=http://192.168.33.10:9000 \
+            -Dsonar.login=<seu token>
+        ```
+    - Salvar.
